@@ -1,7 +1,9 @@
 package org.nms.database.helpers;
 
 import io.vertx.core.Future;
+import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.eventbus.Message;
+import io.vertx.core.eventbus.ReplyException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Tuple;
@@ -31,6 +33,11 @@ public class DbEventBus
                     .onFailure(err ->
                             Logger.warn("❌ Failed to execute...\n" + query + "\nwith params => " + params.encode() + "\nError => " + err.getMessage()));
         }
+        catch (ReplyException replyException)
+        {
+            Logger.warn("⚠ Query is taking more time then expected to execute");
+            return Future.failedFuture("⚠ Query is taking more time then expected to execute");
+        }
         catch (Exception e)
         {
             return Future.failedFuture(e);
@@ -48,6 +55,11 @@ public class DbEventBus
                     .map(Message::body)
 
                     .onFailure(err -> Logger.warn("❌ Failed to execute...\n" + query + "\nError => " + err.getMessage()));
+        }
+        catch (ReplyException replyException)
+        {
+            Logger.warn("⚠ Query is taking more time then expected to execute");
+            return Future.failedFuture("⚠ Query is taking more time then expected to execute");
         }
         catch (Exception e)
         {
@@ -88,6 +100,11 @@ public class DbEventBus
 
                     .onFailure(err ->
                             Logger.warn("❌ Failed to execute...\n" + query + "\nWith params " + params.stream().map(Tuple::deepToString).collect(Collectors.joining(", ", "[", "]")) + "\nError => " + err.getMessage()));
+        }
+        catch (ReplyException replyException)
+        {
+            Logger.warn("⚠ Query is taking more time then expected to execute");
+            return Future.failedFuture("⚠ Query is taking more time then expected to execute");
         }
         catch (Exception e)
         {

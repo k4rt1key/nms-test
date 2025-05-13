@@ -1,11 +1,13 @@
 package org.nms.api.handlers;
 
+import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.sqlclient.Tuple;
 import org.nms.Logger;
 import org.nms.api.helpers.HttpResponse;
+import org.nms.constants.Config;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
 import org.nms.database.helpers.DbEventBus;
@@ -377,6 +379,7 @@ public class DiscoveryHandler
         {
             var id = Integer.parseInt(ctx.request().getParam("id"));
             var checkRequest = DbEventBus.sendQueryExecutionRequest(Queries.Discovery.GET_BY_ID, new JsonArray().add(id));
+
             checkRequest.onComplete(ar ->
             {
                 if (ar.succeeded())
@@ -388,10 +391,11 @@ public class DiscoveryHandler
                         return;
                     }
 
-                    vertx.eventBus().request(
+                    vertx.eventBus().send(
                             Fields.EventBus.RUN_DISCOVERY_ADDRESS,
                             new JsonObject().put("id", id)
                     );
+
                     HttpResponse.sendSuccess(ctx, 202, "Discovery request with id " + id + " accepted and is being processed",
                             new JsonArray());
                 }

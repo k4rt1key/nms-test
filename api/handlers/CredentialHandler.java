@@ -142,6 +142,7 @@ public class CredentialHandler
                 }
 
                 var deleteRequest = DbEventBus.sendQueryExecutionRequest(Queries.Credential.DELETE, new JsonArray().add(id));
+
                 deleteRequest.onComplete(delAr ->
                 {
                     if (delAr.succeeded())

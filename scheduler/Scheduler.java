@@ -67,6 +67,7 @@ public class Scheduler extends AbstractVerticle
             var pluginRequest = new JsonObject()
                     .put("type", "polling")
                     .put(Fields.PluginPollingRequest.METRIC_GROUPS, metricGroups);
+
             var POLLING_TIMEOUT = Config.INITIAL_PLUGIN_OVERHEAD_TIME + (metricGroups.size() * Config.POLLING_TIMEOUT_PER_METRIC_GROUP);
 
             vertx.eventBus().request(
