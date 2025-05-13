@@ -1,17 +1,18 @@
 package org.nms.scheduler;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Promise;
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Tuple;
 import org.nms.App;
 import org.nms.cache.MonitorCache;
-import org.nms.ConsoleLogger;
+import org.nms.Logger;
 import org.nms.constants.Config;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
-import org.nms.database.DbEngine;
+import org.nms.database.helpers.DbEventBus;
 
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -21,21 +22,28 @@ public class Scheduler extends AbstractVerticle
 {
     private static final int CHECKING_INTERVAL = 30; // seconds
 
-    private long timerId;
+    private long timerId = 0L;
 
     @Override
-    public void start()
+    public void start(Promise<Void> startPromise)
     {
-        ConsoleLogger.debug("✅ Starting SchedulerVerticle with CHECKING_INTERVAL => " + CHECKING_INTERVAL + " seconds, on thread [ " + Thread.currentThread().getName() + " ] ");
+        var populateRequest = MonitorCache.populate();
 
-        // Populate cache from DB
-        MonitorCache.populate()
-                // Start periodic timer for checking metric groups
-                .onSuccess(res ->
-                        timerId = App.vertx.setPeriodic(CHECKING_INTERVAL * 1000, id -> processMetricGroups()))
-                .onFailure(err ->
-                        ConsoleLogger.error("❌ Error Running Scheduler => " + err.getMessage())
-                );
+        populateRequest.onComplete(ar ->
+        {
+            if (ar.succeeded())
+            {
+                timerId = App.vertx.setPeriodic(CHECKING_INTERVAL * 1000, id -> processMetricGroups());
+
+                Logger.debug("✅ Scheduler Verticle Deployed with CHECKING_INTERVAL => " + CHECKING_INTERVAL + " seconds, on thread [ " + Thread.currentThread().getName() + " ] ");
+
+                startPromise.complete();
+            }
+            else
+            {
+                startPromise.fail("❌ Error Deploying Scheduler => " + ar.cause().getMessage());
+            }
+        });
     }
 
     @Override
@@ -44,35 +52,25 @@ public class Scheduler extends AbstractVerticle
         if (timerId != 0)
         {
             vertx.cancelTimer(timerId);
-
-            ConsoleLogger.debug("\uD83D\uDED1 Scheduler Stopped");
-
+            Logger.debug("\uD83D\uDED1 Scheduler Stopped");
             timerId = 0;
         }
     }
 
-    // Process metric groups and handle polling
     private void processMetricGroups()
     {
-        // Decrement intervals and collect timed-out groups
         var timedOutGroups = MonitorCache.decrementAndCollectTimedOutMetricGroups(CHECKING_INTERVAL);
 
-        // If there are timed-out groups, process them
         if (!timedOutGroups.isEmpty())
         {
-            // Prepare polling request for Plugin Manager
             var metricGroups = preparePollingMetricGroups(timedOutGroups);
-
-            // Create proper plugin request
             var pluginRequest = new JsonObject()
                     .put("type", "polling")
                     .put(Fields.PluginPollingRequest.METRIC_GROUPS, metricGroups);
+            var POLLING_TIMEOUT = Config.INITIAL_PLUGIN_OVERHEAD_TIME + (metricGroups.size() * Config.POLLING_TIMEOUT_PER_METRIC_GROUP);
 
-            var POLLING_TIMEOUT = Config.INITIAL_OVERHEAD + (metricGroups.size() * Config.POLLING_TIMEOUT_PER_METRIC_GROUP);
-
-            // Send polling request via plugin execute event bus
             vertx.eventBus().request(
-                    "plugin.execute",
+                    Fields.EventBus.PLUGIN_ADDRESS,
                     pluginRequest,
                     new DeliveryOptions().setSendTimeout(POLLING_TIMEOUT * 1000L),
                     ar ->
@@ -80,10 +78,9 @@ public class Scheduler extends AbstractVerticle
                         if (ar.succeeded())
                         {
                             var response = (JsonObject) ar.result().body();
-
                             if (response.containsKey("error"))
                             {
-                                ConsoleLogger.error("❌ Error During Polling => " + response.getString("error"));
+                                Logger.error("❌ Error During Polling => " + response.getString("error"));
                             }
                             else
                             {
@@ -93,14 +90,13 @@ public class Scheduler extends AbstractVerticle
                         }
                         else
                         {
-                            ConsoleLogger.error("❌ Error During Polling => " + ar.cause().getMessage());
+                            Logger.error("❌ Error During Polling => " + ar.cause().getMessage());
                         }
                     }
             );
         }
     }
 
-    // Prepare metric groups for polling
     private JsonArray preparePollingMetricGroups(List<JsonObject> timedOutGroups)
     {
         var metricGroups = new JsonArray();
@@ -118,14 +114,12 @@ public class Scheduler extends AbstractVerticle
                             metricGroup.getInteger(Fields.MonitorCache.PORT))
                     .put(Fields.PluginPollingRequest.CREDENTIALS,
                             metricGroup.getJsonObject(Fields.MonitorCache.CREDENTIAL));
-
             metricGroups.add(groupData);
         }
 
         return metricGroups;
     }
 
-    // Process and save polling results
     private void processAndSaveResults(JsonArray results)
     {
         var batchParams = new ArrayList<Tuple>();
@@ -134,19 +128,14 @@ public class Scheduler extends AbstractVerticle
         {
             var result = results.getJsonObject(i);
 
-            // Skip unsuccessful results
             if (!result.getBoolean("success", false))
             {
                 continue;
             }
 
-            // Add timestamp
             result.put(Fields.PollingResult.TIME, ZonedDateTime.now().toString());
-
-            // Handle different data types
             var data = result.getString(Fields.PluginPollingResponse.DATA);
 
-            // Prepare batch parameter based on data type
             if (isValidJsonObject(data))
             {
                 batchParams.add(Tuple.of(
@@ -173,17 +162,19 @@ public class Scheduler extends AbstractVerticle
             }
         }
 
-        // Save results to database
         if (!batchParams.isEmpty())
         {
-            DbEngine.execute(Queries.PollingResult.INSERT, batchParams)
-                    .onFailure(err ->
-                            ConsoleLogger.error("❌ Error During Saving Polled Data => " + err.getMessage())
-                    );
+            var saveRequest = DbEventBus.sendQueryExecutionRequest(Queries.PollingResult.INSERT, batchParams);
+            saveRequest.onComplete(ar ->
+            {
+                if (ar.failed())
+                {
+                    Logger.error("❌ Error During Saving Polled Data => " + ar.cause().getMessage());
+                }
+            });
         }
     }
 
-    // Utility methods to validate JSON
     private boolean isValidJsonObject(String s)
     {
         try

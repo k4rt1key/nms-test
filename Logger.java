@@ -1,12 +1,11 @@
 package org.nms;
 
-import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 
 
-public class ConsoleLogger
+public class Logger
 {
-    public static final Logger logger = LoggerFactory.getLogger(ConsoleLogger.class);
+    public static final io.vertx.core.impl.logging.Logger logger = LoggerFactory.getLogger(Logger.class);
 
     public static void info(String message)
     {

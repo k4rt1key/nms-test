@@ -1,188 +1,146 @@
 package org.nms.database;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.pgclient.PgBuilder;
-import io.vertx.pgclient.PgConnectOptions;
-import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
-import org.nms.ConsoleLogger;
+import org.nms.Logger;
 import org.nms.constants.Fields;
+import org.nms.constants.Queries;
+import org.nms.database.helpers.DbEventBus;
 
 import java.util.ArrayList;
+import java.util.List;
 
 public class Database extends AbstractVerticle
 {
-    // Database configuration
-    private static final String DB_URL = "localhost";
-    private static final int DB_PORT = 5000;
-    private static final String DB_NAME = "nms";
-    private static final String DB_USER = "nms";
-    private static final String DB_PASSWORD = "nms";
-
-    private SqlClient client;
+    private io.vertx.sqlclient.SqlClient sqlClient;
 
     @Override
     public void start(Promise<Void> startPromise)
     {
-        try
-        {
-            // Create database connection
-            createPostgresClient();
+        try {
+            sqlClient = SqlClient.client;
 
-            // Register event bus handlers
-            registerEventBusHandlers();
+            if (sqlClient == null)
+            {
+                startPromise.fail("❌ SqlClient is null");
+            }
 
-            ConsoleLogger.info("✅ Database verticle started successfully");
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_ADDRESS, this::handleExecuteSql);
 
-            startPromise.complete();
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_WITH_PARAMS_ADDRESS, this::handleExecuteSqlWithParams);
+
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_BATCH_ADDRESS, this::handleExecuteSqlBatch);
+
+            Future.join(List.of(
+                    DbEventBus.sendQueryExecutionRequest(Queries.User.CREATE_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Credential.CREATE_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_CREDENTIAL_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_RESULT_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Monitor.CREATE_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.Monitor.CREATE_METRIC_GROUP_SCHEMA),
+                    DbEventBus.sendQueryExecutionRequest(Queries.PollingResult.CREATE_SCHEMA)
+            )).onComplete(allSchemasCreated ->
+            {
+                if(allSchemasCreated.succeeded())
+                {
+                    Logger.info("✅ Successfully deployed Database Verticle");
+                    startPromise.complete();
+                }
+                else
+                {
+                    Logger.warn("⚠ Something went wrong creating db schema");
+                }
+            });
         }
         catch (Exception e)
         {
-            ConsoleLogger.error("❌ Failed to start database verticle: " + e.getMessage());
-
-            startPromise.fail(e);
+            startPromise.fail("❌ Failed to deploy database, error => " + e.getMessage());
         }
     }
 
     @Override
     public void stop(Promise<Void> stopPromise)
     {
-        if (client != null)
-        {
-            client.close()
-                    .onSuccess(v ->
+        sqlClient
+                .close()
+                .onComplete(clientClose ->
+                {
+                    if(clientClose.succeeded())
                     {
-                        ConsoleLogger.info("✅ Database connection closed");
+                        Logger.info("\uD83D\uDED1 Database Verticle Stopped");
+
                         stopPromise.complete();
-                    })
-                    .onFailure(err ->
+                    }
+                    else
                     {
-                        ConsoleLogger.error("❌ Failed to close database connection: " + err.getMessage());
-                        stopPromise.fail(err);
-                    });
-        }
-        else
-        {
-            stopPromise.complete();
-        }
+                        stopPromise.fail("❌ Failed to close database connection, error => " + clientClose.cause().getMessage());
+                    }
+                });
     }
 
-    private void createPostgresClient()
-    {
-        try
-        {
-            var connectOptions = new PgConnectOptions()
-                    .setPort(DB_PORT)
-                    .setHost(DB_URL)
-                    .setDatabase(DB_NAME)
-                    .setUser(DB_USER)
-                    .setPassword(DB_PASSWORD);
+    private void handleExecuteSql(Message<String> message) {
+        String query = message.body();
 
-            var poolOptions = new PoolOptions().setMaxSize(5);
+        sqlClient.preparedQuery(query)
 
-            client = PgBuilder
-                    .client()
-                    .with(poolOptions)
-                    .connectingTo(connectOptions)
-                    .using(vertx)
-                    .build();
+                .execute()
 
-            ConsoleLogger.info("✅ Postgres client created successfully");
-        }
-        catch (Exception e)
-        {
-            ConsoleLogger.error("❌ Failed to create Postgres client: " + e.getMessage());
-            throw e;
-        }
-    }
+                .map(this::toJsonArray)
 
-    private void registerEventBusHandlers()
-    {
-        // Handler for simple SQL execution
-        vertx.eventBus().consumer(Fields.EventBus.EXECUTE_SQL_ADDRESS, this::handleExecuteSql);
-
-        // Handler for SQL execution with parameters
-        vertx.eventBus().consumer(Fields.EventBus.EXECUTE_SQL_WITH_PARAMS_ADDRESS, this::handleExecuteSqlWithParams);
-
-        // Handler for batch SQL execution
-        vertx.eventBus().consumer(Fields.EventBus.EXECUTE_SQL_BATCH_ADDRESS, this::handleExecuteSqlBatch);
-    }
-
-    private void handleExecuteSql(Message<String> message)
-    {
-        String sql = message.body();
-
-        if (client != null)
-        {
-            client.preparedQuery(sql)
-
-                    .execute()
-
-                    .map(this::toJsonArray)
-
-                    .onSuccess(result ->
+                .onComplete(dbResult ->
+                {
+                    if(dbResult.succeeded())
                     {
-                        ConsoleLogger.info("✅ Successfully executed: \n🚀 " + sql);
-                        message.reply(result);
-                    })
-
-                    .onFailure(err ->
+                        message.reply(dbResult.result());
+                    }
+                    else
                     {
-                        ConsoleLogger.warn("❌ Failed to execute " + sql + ", error => " + err.getMessage());
-                        message.fail(500, err.getMessage());
-                    });
-        }
-        else
-        {
-            ConsoleLogger.error("❌ Postgres Client Is Null");
-            message.fail(500, "❌ Postgres Client Is Null");
-        }
+                        message.fail(500, "❌ Failed to execute...\n" + query + "\nerror => " + dbResult.cause().getMessage());
+                    }
+                });
     }
 
     private void handleExecuteSqlWithParams(Message<JsonObject> message)
     {
         JsonObject request = message.body();
-        String sql = request.getString("sql");
+
+        String query = request.getString("query");
+
         JsonArray params = request.getJsonArray("params");
 
-        if (client != null)
-        {
-            client.preparedQuery(sql)
+        sqlClient.preparedQuery(query)
 
-                    .execute(Tuple.wrap(params.getList().toArray()))
+                .execute(Tuple.wrap(params.getList().toArray()))
 
-                    .map(this::toJsonArray)
+                .map(this::toJsonArray)
 
-                    .onSuccess(result ->
+                .onComplete(dbResult ->
+                {
+                    if(dbResult.succeeded())
                     {
-                        ConsoleLogger.info("✅ Successfully executed: \n🚀 " + sql + "\n🚀 With Params " + params.encode());
-                        message.reply(result);
-                    })
-
-                    .onFailure(err ->
+                        message.reply(dbResult.result());
+                    }
+                    else
                     {
-                        ConsoleLogger.warn("❌ Failed to execute " + sql + ", error => " + err.getMessage());
-                        message.fail(500, err.getMessage());
-                    });
-        }
-        else
-        {
-            ConsoleLogger.error("❌ Postgres Client Is Null");
-            message.fail(500, "❌ Postgres Client Is Null");
-        }
+                        message.fail(500, "❌ Failed to execute...\n" + query + "\nerror => " + dbResult.cause().getMessage());
+                    }
+                });
     }
 
     private void handleExecuteSqlBatch(Message<JsonObject> message)
     {
         var request = message.body();
-        var sql = request.getString("sql");
+
+        var query = request.getString("query");
+
         var paramsArray = request.getJsonArray("params");
 
         var tuples = new ArrayList<Tuple>();
@@ -190,45 +148,37 @@ public class Database extends AbstractVerticle
         for (int i = 0; i < paramsArray.size(); i++)
         {
             var params = paramsArray.getJsonArray(i);
+
             tuples.add(Tuple.wrap(params.getList().toArray()));
         }
 
-        if (client != null)
-        {
-            client.preparedQuery(sql)
+        sqlClient.preparedQuery(query)
 
-                    .executeBatch(tuples)
+                .executeBatch(tuples)
 
-                    .map(this::toJsonArray)
+                .map(this::toJsonArray)
 
-                    .onSuccess(result ->
+                .onComplete(dbResult ->
+                {
+                    if(dbResult.succeeded())
                     {
-                        ConsoleLogger.info("✅ Successfully executed batch: \n🚀 " + sql);
-                        message.reply(result);
-                    })
-
-                    .onFailure(err ->
+                        message.reply(dbResult.result());
+                    }
+                    else
                     {
-                        ConsoleLogger.warn("❌ Failed to execute batch " + sql + ", error => " + err.getMessage());
-                        message.fail(500, err.getMessage());
-                    });
-        }
-        else
-        {
-            ConsoleLogger.error("❌ Postgres Client Is Null");
-            message.fail(500, "❌ Postgres Client Is Null");
-        }
+                        message.fail(500, "❌ Failed to execute...\n" + query + "\nerror => " + dbResult.cause().getMessage());
+                    }
+                });
     }
 
     private JsonArray toJsonArray(RowSet<Row> rows)
     {
-        var jsonArray = new JsonArray();
+        var results = new JsonArray();
 
-        for (Row row : rows)
-        {
-            jsonArray.add(row.toJson());
+        for (Row row : rows) {
+            results.add(row.toJson());
         }
 
-        return jsonArray;
+        return results;
     }
 }

@@ -62,6 +62,8 @@ public class Fields
 
         public static final String PENDING_STATUS = "PENDING";
 
+        public static final String FAILED_STATUS = "FAILED";
+
         public static final String COMPLETED_STATUS = "COMPLETED";
 
         public static final String MESSAGE = "message";
@@ -196,7 +198,7 @@ public class Fields
     {
         public static final String PLUGIN_ADDRESS = "plugin.execute";
 
-        public static final String DISCOVERY_ADDRESS = "plugin.discovery";
+        public static final String RUN_DISCOVERY_ADDRESS = "plugin.discovery";
 
         public static final String PING_CHECK_ADDRESS = "discovery.ping";
 

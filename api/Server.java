@@ -11,7 +11,7 @@ import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.JWTAuthHandler;
 
 import org.nms.App;
-import org.nms.ConsoleLogger;
+import org.nms.Logger;
 import org.nms.api.handlers.*;
 import org.nms.api.auth.AuthMiddleware;
 import org.nms.api.validators.CredentialRequestValidator;
@@ -24,16 +24,21 @@ import org.nms.constants.Config;
 public class Server extends AbstractVerticle
 {
     public static final String CREDENTIALS_ENDPOINT = "/api/v1/credential/*";
+
     public static final String DISCOVERY_ENDPOINT = "/api/v1/discovery/*";
+
     public static final String PROVISION_ENDPOINT = "/api/v1/provision/*";
+
     public static final String POLLING_ENDPOINT = "/api/v1/polling/*";
+
     public static final String USER_ENDPOINT = "/api/v1/user/*";
-    public static final int HTTP_PORT = 8080;
 
     private static final JWTAuthOptions config = new JWTAuthOptions()
                                                     .setKeyStore(new KeyStoreOptions().setPath(Config.KEYSTORE_PATH).setPassword(Config.JWT_SECRET));
 
     public static final JWTAuth jwtAuth = JWTAuth.create(App.vertx, config);
+
+    public static final JWTAuthHandler jwtAuthHandler = JWTAuthHandler.create(Server.jwtAuth);
 
     @Override
     public void start(Promise<Void> startPromise)
@@ -56,7 +61,7 @@ public class Server extends AbstractVerticle
         setupUserRoutes(router);
 
         router.route()
-                .handler(JWTAuthHandler.create(jwtAuth))
+                .handler(jwtAuthHandler)
                 .handler(AuthMiddleware::authenticate);
 
         // ===== Configure Credential Routes =====
@@ -75,16 +80,16 @@ public class Server extends AbstractVerticle
         server.requestHandler(router);
 
         // ===== Listen on Port... =====
-        server.listen(HTTP_PORT, http ->
+        server.listen(Config.HTTP_PORT, http ->
         {
             if(http.succeeded())
             {
-                ConsoleLogger.info("✅ HTTP Server Started On Port => " + HTTP_PORT + " On Thread [ " + Thread.currentThread().getName() + " ] ");
+                Logger.info("✅ HTTP Server Started On Port => " + Config.HTTP_PORT + " On Thread [ " + Thread.currentThread().getName() + " ] ");
                 startPromise.complete();
             }
             else
             {
-                ConsoleLogger.error("Failed To Start HTTP Server => " + http.cause());
+                Logger.error("Failed To Start HTTP Server => " + http.cause());
                 startPromise.fail(http.cause());
             }
         });
@@ -98,7 +103,7 @@ public class Server extends AbstractVerticle
                 .handler(UserHandler::getUsers);
 
         userRouter.get("/:id")
-                .handler(JWTAuthHandler.create(Server.jwtAuth))
+                .handler(jwtAuthHandler)
                 .handler(AuthMiddleware::authenticate)
                 .handler(UserRequestValidator::getUserByIdRequestValidator)
                 .handler(UserHandler::getUserById);
@@ -112,13 +117,13 @@ public class Server extends AbstractVerticle
                 .handler(UserHandler::register);
 
         userRouter.patch("/:id")
-                .handler(JWTAuthHandler.create(Server.jwtAuth))
+                .handler(jwtAuthHandler)
                 .handler(AuthMiddleware::authenticate)
                 .handler(UserRequestValidator::updateUserRequestValidator)
                 .handler(UserHandler::updateUser);
 
         userRouter.delete("/:id")
-                .handler(JWTAuthHandler.create(Server.jwtAuth))
+                .handler(jwtAuthHandler)
                 .handler(AuthMiddleware::authenticate)
                 .handler(UserRequestValidator::deleteUserRequestValidator)
                 .handler(UserHandler::deleteUser);
@@ -131,7 +136,6 @@ public class Server extends AbstractVerticle
         var provisionRouter = Router.router(App.vertx);
 
         provisionRouter.get("/")
-                .handler(JWTAuthHandler.create(jwtAuth))
                 .handler(ProvisionHandler::getAllProvisions);
 
         provisionRouter.get("/:id")
@@ -233,6 +237,6 @@ public class Server extends AbstractVerticle
     @Override
     public void stop()
     {
-        ConsoleLogger.info("Http Server Stopped");
+        Logger.info("\uD83D\uDED1 Http Server Stopped");
     }
 }

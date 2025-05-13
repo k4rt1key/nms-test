@@ -3,7 +3,7 @@ package org.nms.plugin;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
-import org.nms.ConsoleLogger;
+import org.nms.Logger;
 import org.nms.constants.Config;
 import org.nms.constants.Fields;
 
@@ -17,13 +17,21 @@ public class Plugin extends AbstractVerticle
     @Override
     public void start()
     {
-        // Register event bus handler
-        vertx.eventBus().consumer(Fields.EventBus.PLUGIN_ADDRESS, message ->
+        vertx.eventBus().localConsumer(Fields.EventBus.PLUGIN_ADDRESS, message ->
         {
             var request = (JsonObject) message.body();
             executePlugin(request)
                     .onComplete(ar -> message.reply(ar.result()));
         });
+
+        Logger.info("✅ Plugin Verticle Deployed");
+    }
+
+
+    @Override
+    public void stop()
+    {
+        Logger.info("\uD83D\uDED1 Plugin Verticle Stopped");
     }
 
     /**
@@ -44,7 +52,7 @@ public class Plugin extends AbstractVerticle
                 var inputJsonStr = request.encode();
                 var command = new String[] {Config.PLUGIN_PATH, inputJsonStr};
 
-                ConsoleLogger.debug("Executing plugin with request: " + inputJsonStr);
+                Logger.debug("Executing plugin with request: " + inputJsonStr);
 
                 // Run command
                 var builder = new ProcessBuilder(command);
@@ -56,7 +64,7 @@ public class Plugin extends AbstractVerticle
 
                 if (!done)
                 {
-                    ConsoleLogger.warn("Plugin not responding within " + timeout + " seconds");
+                    Logger.warn("Plugin not responding within " + timeout + " seconds");
                     process.destroyForcibly();
                     return new JsonObject().put("error", "Plugin execution timed out");
                 }
@@ -70,7 +78,7 @@ public class Plugin extends AbstractVerticle
             }
             catch (Exception e)
             {
-                ConsoleLogger.error("Error executing plugin: " + e.getMessage());
+                Logger.error("Error executing plugin: " + e.getMessage());
                 return new JsonObject().put("error", "Plugin execution failed: " + e.getMessage());
             }
         });
@@ -87,16 +95,16 @@ public class Plugin extends AbstractVerticle
         {
             var ips = request.getJsonArray(Fields.PluginDiscoveryRequest.IPS, null);
             var ipsCount = (ips != null) ? ips.size() : 0;
-            return Config.INITIAL_OVERHEAD + (ipsCount * Config.DISCOVERY_TIMEOUT_PER_IP);
+            return Config.INITIAL_PLUGIN_OVERHEAD_TIME + (ipsCount * Config.DISCOVERY_TIMEOUT_PER_IP);
         }
         else if ("polling".equals(type))
         {
             var metricGroups = request.getJsonArray(Fields.PluginPollingRequest.METRIC_GROUPS, null);
             var metricGroupCount = (metricGroups != null) ? metricGroups.size() : 0;
-            return Config.INITIAL_OVERHEAD + (metricGroupCount * Config.POLLING_TIMEOUT_PER_METRIC_GROUP);
+            return Config.INITIAL_PLUGIN_OVERHEAD_TIME + (metricGroupCount * Config.POLLING_TIMEOUT_PER_METRIC_GROUP);
         }
 
         // Default timeout
-        return Config.INITIAL_OVERHEAD + 10;
+        return Config.INITIAL_PLUGIN_OVERHEAD_TIME + 10;
     }
 }
