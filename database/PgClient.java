@@ -3,10 +3,11 @@ package org.nms.database;
 import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.SqlClient;
 import org.nms.App;
 import org.nms.constants.Config;
 
-public class SqlClient
+public class PgClient
 {
     private static final PgConnectOptions connectOptions = new PgConnectOptions()
                                                                 .setPort(Config.DB_PORT)
@@ -18,7 +19,7 @@ public class SqlClient
     private static final PoolOptions poolOptions = new PoolOptions()
                                                         .setMaxSize(5);
 
-    public static final io.vertx.sqlclient.SqlClient client = PgBuilder
+    public static final SqlClient clientInstance = PgBuilder
                                                                 .client()
                                                                 .with(poolOptions)
                                                                 .connectingTo(connectOptions)

@@ -1,20 +1,19 @@
-package org.nms.database.helpers;
+package org.nms.database;
 
 import io.vertx.core.Future;
-import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.eventbus.ReplyException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Tuple;
 import org.nms.App;
-import org.nms.Logger;
+import static org.nms.App.logger;
 import org.nms.constants.Fields;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class DbEventBus
+public class DbUtility
 {
     public static Future<JsonArray> sendQueryExecutionRequest(String query, JsonArray params)
     {
@@ -22,48 +21,56 @@ public class DbEventBus
                 .put("query", query)
                 .put("params", params);
 
-        try {
+        try
+        {
             return App.vertx.eventBus().<JsonArray>request(
-                            Fields.EventBus.EXECUTE_SQL_WITH_PARAMS_ADDRESS,
+                            Fields.EventBus.EXECUTE_SQL_QUERY_WITH_PARAMS_ADDRESS,
                             request
                     )
 
                     .map(Message::body)
 
                     .onFailure(err ->
-                            Logger.warn("❌ Failed to execute...\n" + query + "\nwith params => " + params.encode() + "\nError => " + err.getMessage()));
+                            logger.warn("❌ Failed to execute...\n" + query + "\nwith params => " + params.encode() + "\nError => " + err.getMessage()));
         }
+
         catch (ReplyException replyException)
         {
-            Logger.warn("⚠ Query is taking more time then expected to execute");
+            logger.warn("⚠ Query is taking more time then expected to execute");
+
             return Future.failedFuture("⚠ Query is taking more time then expected to execute");
         }
-        catch (Exception e)
+
+        catch (Exception exception)
         {
-            return Future.failedFuture(e);
+            return Future.failedFuture(exception);
         }
     }
 
     public static Future<JsonArray> sendQueryExecutionRequest(String query)
     {
-        try {
+        try
+        {
             return App.vertx.eventBus().<JsonArray>request(
-                            Fields.EventBus.EXECUTE_SQL_ADDRESS,
+                            Fields.EventBus.EXECUTE_SQL_QUERY_ADDRESS,
                             query
                     )
 
                     .map(Message::body)
 
-                    .onFailure(err -> Logger.warn("❌ Failed to execute...\n" + query + "\nError => " + err.getMessage()));
+                    .onFailure(err -> logger.warn("❌ Failed to execute...\n" + query + "\nError => " + err.getMessage()));
         }
+
         catch (ReplyException replyException)
         {
-            Logger.warn("⚠ Query is taking more time then expected to execute");
+            logger.warn("⚠ Query is taking more time then expected to execute");
+
             return Future.failedFuture("⚠ Query is taking more time then expected to execute");
         }
-        catch (Exception e)
+
+        catch (Exception exception)
         {
-            return Future.failedFuture(e);
+            return Future.failedFuture(exception);
         }
     }
 
@@ -72,13 +79,15 @@ public class DbEventBus
         // Convert List<Tuple> to JsonArray of JsonArrays for transmission over event bus
         JsonArray dbParams = new JsonArray();
 
-        for (Tuple tuple : params) {
+        for (Tuple tuple : params)
+        {
             JsonArray paramArray = new JsonArray();
 
             // Convert each Tuple to JsonArray
             int size = tuple.size();
 
-            for (int i = 0; i < size; i++) {
+            for (int i = 0; i < size; i++)
+            {
                 paramArray.add(tuple.getValue(i));
             }
 
@@ -92,23 +101,26 @@ public class DbEventBus
         try
         {
             return App.vertx.eventBus().<JsonArray>request(
-                            Fields.EventBus.EXECUTE_SQL_BATCH_ADDRESS,
+                            Fields.EventBus.EXECUTE_SQL_QUERY_BATCH_ADDRESS,
                             request
                     )
 
                     .map(Message::body)
 
                     .onFailure(err ->
-                            Logger.warn("❌ Failed to execute...\n" + query + "\nWith params " + params.stream().map(Tuple::deepToString).collect(Collectors.joining(", ", "[", "]")) + "\nError => " + err.getMessage()));
+                            logger.warn("❌ Failed to execute...\n" + query + "\nWith params " + params.stream().map(Tuple::deepToString).collect(Collectors.joining(", ", "[", "]")) + "\nError => " + err.getMessage()));
         }
+
         catch (ReplyException replyException)
         {
-            Logger.warn("⚠ Query is taking more time then expected to execute");
+            logger.warn("⚠ Query is taking more time then expected to execute");
+
             return Future.failedFuture("⚠ Query is taking more time then expected to execute");
         }
-        catch (Exception e)
+
+        catch (Exception exception)
         {
-            return Future.failedFuture(e);
+            return Future.failedFuture(exception);
         }
     }
 }

@@ -1,4 +1,4 @@
-package org.nms.cache;
+package org.nms;
 
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
@@ -7,14 +7,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.nms.Logger;
+import static org.nms.App.logger;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
-import org.nms.database.helpers.DbEventBus;
+import org.nms.database.DbUtility;
 
-public class MonitorCache
+public class Cache
 {
     private static final ConcurrentHashMap<Integer, JsonObject> cachedMetricGroups = new ConcurrentHashMap<>();
+
     private static final ConcurrentHashMap<Integer, JsonObject> referencedMetricGroups = new ConcurrentHashMap<>();
 
     // Populate cache from database
@@ -22,7 +23,7 @@ public class MonitorCache
     {
         try
         {
-            return DbEventBus.sendQueryExecutionRequest(Queries.Monitor.GET_ALL)
+            return DbUtility.sendQueryExecutionRequest(Queries.Monitor.GET_ALL)
                     .onComplete(monitorArrayResult ->
                     {
                         if(monitorArrayResult.succeeded())
@@ -35,7 +36,7 @@ public class MonitorCache
                     });
         }
 
-        catch (Exception e)
+        catch (Exception exception)
         {
             return Future.failedFuture("Error Populating Cache");
         }
@@ -67,17 +68,18 @@ public class MonitorCache
                     var key = metricObject.getInteger(Fields.MetricGroup.ID);
 
                     referencedMetricGroups.put(key, value.copy());
+
                     cachedMetricGroups.put(key, value.copy());
                 }
-                catch (Exception e)
+                catch (Exception exception)
                 {
-                    Logger.warn("Error Inserting Monitor in cache: " + e.getMessage());
+                    logger.warn("Error Inserting Monitor in cache: " + exception.getMessage());
                 }
             }
         }
 
 
-        Logger.info("📬 Inserted " + monitorArray.size() + " monitors Into Cache, Total Entries: " + cachedMetricGroups.size());
+        logger.info("📬 Inserted " + monitorArray.size() + " monitors Into Cache, Total Entries: " + cachedMetricGroups.size());
     }
 
     // Update metric groups in cache
@@ -113,13 +115,13 @@ public class MonitorCache
                 referencedMetricGroups.put(key, updatedValue);
                 cachedMetricGroups.put(key, updatedValue);
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
-                Logger.warn("Error Updating Monitor in Cache: " + e.getMessage());
+                logger.warn("Error Updating Monitor in Cache: " + exception.getMessage());
             }
         }
 
-        Logger.info("➖ Updated " + metricGroups.size() + " Entries in Cache");
+        logger.info("➖ Updated " + metricGroups.size() + " Entries in Cache");
     }
 
     // Delete metric groups for a specific monitor
@@ -138,11 +140,11 @@ public class MonitorCache
             return false;
         });
 
-        Logger.info("➖ Removed " + removedCount.size() + " Entries from Cache");
+        logger.info("➖ Removed " + removedCount.size() + " Entries from Cache");
     }
 
     // Decrement intervals and collect timed-out metric groups
-    public static List<JsonObject> decrementAndCollectTimedOutMetricGroups(int interval)
+    public static List<JsonObject> collectTimedOutGroups(int interval)
     {
         var timedOutMetricGroups = new ArrayList<JsonObject>();
 
@@ -182,7 +184,7 @@ public class MonitorCache
             return false;
         });
 
-        Logger.debug("⏰ Found " + timedOutMetricGroups.size() + " Timed Out Metric Groups");
+        logger.debug("⏰ Found " + timedOutMetricGroups.size() + " Timed Out Metric Groups");
         return timedOutMetricGroups;
     }
 }

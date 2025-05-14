@@ -8,74 +8,75 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
-import org.nms.Logger;
+import static org.nms.App.logger;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
-import org.nms.database.helpers.DbEventBus;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class Database extends AbstractVerticle
 {
-    private io.vertx.sqlclient.SqlClient sqlClient;
+    private SqlClient dbClient;
 
     @Override
     public void start(Promise<Void> startPromise)
     {
-        try {
-            sqlClient = SqlClient.client;
+        try
+        {
+            dbClient = PgClient.clientInstance;
 
-            if (sqlClient == null)
+            if (dbClient == null)
             {
                 startPromise.fail("❌ SqlClient is null");
             }
 
-            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_ADDRESS, this::handleExecuteSql);
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_QUERY_ADDRESS, this::handleExecuteSql);
 
-            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_WITH_PARAMS_ADDRESS, this::handleExecuteSqlWithParams);
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_QUERY_WITH_PARAMS_ADDRESS, this::handleExecuteSqlWithParams);
 
-            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_BATCH_ADDRESS, this::handleExecuteSqlBatch);
+            vertx.eventBus().localConsumer(Fields.EventBus.EXECUTE_SQL_QUERY_BATCH_ADDRESS, this::handleExecuteSqlBatch);
 
             Future.join(List.of(
-                    DbEventBus.sendQueryExecutionRequest(Queries.User.CREATE_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Credential.CREATE_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_CREDENTIAL_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_RESULT_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Monitor.CREATE_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.Monitor.CREATE_METRIC_GROUP_SCHEMA),
-                    DbEventBus.sendQueryExecutionRequest(Queries.PollingResult.CREATE_SCHEMA)
+                    DbUtility.sendQueryExecutionRequest(Queries.User.CREATE_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Credential.CREATE_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Discovery.CREATE_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_CREDENTIAL_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Discovery.CREATE_DISCOVERY_RESULT_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Monitor.CREATE_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.Monitor.CREATE_METRIC_GROUP_SCHEMA),
+                    DbUtility.sendQueryExecutionRequest(Queries.PollingResult.CREATE_SCHEMA)
             )).onComplete(allSchemasCreated ->
             {
                 if(allSchemasCreated.succeeded())
                 {
-                    Logger.info("✅ Successfully deployed Database Verticle");
+                    logger.info("✅ Successfully deployed Database Verticle");
                     startPromise.complete();
                 }
                 else
                 {
-                    Logger.warn("⚠ Something went wrong creating db schema");
+                    logger.warn("⚠ Something went wrong creating db schema");
                 }
             });
         }
-        catch (Exception e)
+        catch (Exception exception)
         {
-            startPromise.fail("❌ Failed to deploy database, error => " + e.getMessage());
+            startPromise.fail("❌ Failed to deploy database, error => " + exception.getMessage());
         }
     }
 
     @Override
     public void stop(Promise<Void> stopPromise)
     {
-        sqlClient
+        dbClient
                 .close()
                 .onComplete(clientClose ->
                 {
                     if(clientClose.succeeded())
                     {
-                        Logger.info("\uD83D\uDED1 Database Verticle Stopped");
+                        logger.info("\uD83D\uDED1 Database Verticle Stopped");
 
                         stopPromise.complete();
                     }
@@ -89,7 +90,7 @@ public class Database extends AbstractVerticle
     private void handleExecuteSql(Message<String> message) {
         String query = message.body();
 
-        sqlClient.preparedQuery(query)
+        dbClient.preparedQuery(query)
 
                 .execute()
 
@@ -116,7 +117,7 @@ public class Database extends AbstractVerticle
 
         JsonArray params = request.getJsonArray("params");
 
-        sqlClient.preparedQuery(query)
+        dbClient.preparedQuery(query)
 
                 .execute(Tuple.wrap(params.getList().toArray()))
 
@@ -152,7 +153,7 @@ public class Database extends AbstractVerticle
             tuples.add(Tuple.wrap(params.getList().toArray()));
         }
 
-        sqlClient.preparedQuery(query)
+        dbClient.preparedQuery(query)
 
                 .executeBatch(tuples)
 

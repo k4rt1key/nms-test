@@ -1,27 +1,31 @@
-package org.nms.discovery.helpers;
+package org.nms.discovery;
 
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import org.nms.Logger;
+import org.nms.constants.Fields;
 
-public class Utils
+import static org.nms.App.logger;
+
+public class DiscoveryHelpers
 {
     public static JsonObject createErrorResult(String ip, String message)
     {
         return new JsonObject()
-                .put("ip", ip)
-                .put("success", false)
-                .put("message", message);
+                .put(Fields.Discovery.IP, ip)
+                .put(Fields.Discovery.SUCCESS, false)
+                .put(Fields.DiscoveryResult.MESSAGE, message);
     }
 
     public static JsonArray createErrorResultForAll(JsonArray ipArray, String message)
     {
         var results = new JsonArray();
+
         if (ipArray != null)
         {
             for (var i = 0; i < ipArray.size(); i++)
             {
                 var ip = String.valueOf(ipArray.getValue(i));
+
                 results.add(createErrorResult(ip, message));
             }
         }
@@ -36,9 +40,9 @@ public class Utils
             {
                 closeable.close();
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
-                Logger.error("Error closing resource: " + e.getMessage());
+                logger.error("Error closing resource: " + exception.getMessage());
             }
         }
     }

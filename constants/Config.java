@@ -12,7 +12,11 @@ public class Config
 
     public static final Integer HTTP_PORT = 8080;
 
-    public static final Integer MAX_WORKER_EXECUTE_TIME = 1029;
+    public static final Integer MAX_WORKER_EXECUTE_TIME = 1500;
+
+    public static final String INDIA_ZONE_NAME = "Asia/Kolkata";
+
+    public static final long MAX_IP_COUNT = 1024;
 
     // ===== DB =====
     public static final Integer DB_PORT = 5000;
@@ -25,10 +29,12 @@ public class Config
 
     public static final String DB_PASSWORD = "nms";
 
-    // ====== Timeouts =====
+    // ====== Time ( in seconds ) =====
+    public static final int SCHEDULER_CHECKING_INTERVAL = 30;
+
     public static final int PORT_TIMEOUT = 1;
 
-    public static final int INITIAL_PLUGIN_OVERHEAD_TIME = 5;
+    public static final int BASE_TIME = 5;
 
     public static final int DISCOVERY_TIMEOUT_PER_IP = 1;
 

@@ -5,125 +5,126 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import org.nms.Logger;
+import static org.nms.App.logger;
+
+import org.nms.api.Utility;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
-import org.nms.database.helpers.DbEventBus;
-import org.nms.api.helpers.Ip;
+import org.nms.database.DbUtility;
 
-import org.nms.discovery.helpers.Db;
-
-import static org.nms.discovery.helpers.Db.*;
-import static org.nms.discovery.helpers.PingAndPort.*;
+import static org.nms.discovery.CrudHelpers.*;
+import static org.nms.discovery.ConnectionHelpers.*;
 
 public class Discovery extends AbstractVerticle
 {
     @Override
     public void start()
     {
-        // Run Discovery Handler - Single entry point for discovery process
-        vertx.eventBus().localConsumer(Fields.EventBus.RUN_DISCOVERY_ADDRESS, message ->
+        vertx.eventBus().<JsonObject>localConsumer(Fields.EventBus.RUN_DISCOVERY_ADDRESS, message ->
         {
-            var body = (JsonObject) message.body();
+            var body =  message.body();
 
-            var id = body.getInteger("id");
+            var id = body.getInteger(Fields.Discovery.ID);
 
             runDiscoveryProcess(id)
-                    .onComplete(ar -> {
-                        if (ar.succeeded()) {
-                            Logger.info("Discovery #" + id + " completed successfully");
-                            if (message.replyAddress() != null) {
-                                message.reply(new JsonObject()
-                                        .put("success", true)
-                                        .put("id", id));
-                            }
-                        } else {
-                            Logger.error("Error running discovery #" + id + ": " + ar.cause().getMessage());
-                            if (message.replyAddress() != null) {
-                                message.reply(new JsonObject()
-                                        .put("success", false)
-                                        .put("id", id)
-                                        .put("error", ar.cause().getMessage()));
-                            }
+                    .onComplete(asyncResult ->
+                    {
+                        if (asyncResult.succeeded())
+                        {
+                            logger.info("Discovery with id " + id + " completed successfully");
+                        }
+                        else
+                        {
+                            logger.error("Error running discovery id " + id + ": " + asyncResult.cause().getMessage());
                         }
                     });
         });
 
-        Logger.debug("✅ Discovery Verticle Deployed, on thread [ " + Thread.currentThread().getName() + " ] ");
+        logger.debug("✅ Discovery Verticle Deployed, on thread [ " + Thread.currentThread().getName() + " ] ");
     }
 
     @Override
     public void stop()
     {
-        Logger.info("\uD83D\uDED1 Discovery Verticle Stopped");
+        logger.info("\uD83D\uDED1 Discovery Verticle Stopped");
     }
 
     private Future<Void> runDiscoveryProcess(int id)
     {
-        Promise<Void> promise = Promise.promise();
+        var promise = Promise.promise();
 
         // Step 1: Fetch discovery details
-        Db.fetchDiscoveryDetails(id)
+        CrudHelpers.fetchDiscoveryDetails(id)
                 .compose(discovery ->
                 {
                     // Step 2: Update discovery status to RUNNING
-                    return Db.updateDiscoveryStatus(id, Fields.Discovery.COMPLETED_STATUS)
-                            .compose(v ->
+                    return CrudHelpers.updateDiscoveryStatus(id, Fields.Discovery.COMPLETED_STATUS)
+
+                            .compose(statusUpdationResult ->
                             {
                                 // Step 3: Delete existing results
-                                return DbEventBus.sendQueryExecutionRequest(
+                                return DbUtility.sendQueryExecutionRequest (
                                         Queries.Discovery.DELETE_RESULT,
                                         new JsonArray().add(id)
                                 );
+
                             })
+
                             .compose(v ->
                             {
                                 // Step 4: Perform discovery process
                                 var ipStr = discovery.getString(Fields.Discovery.IP);
+
                                 var ipType = discovery.getString(Fields.Discovery.IP_TYPE);
+
                                 var port = discovery.getInteger(Fields.Discovery.PORT);
+
                                 var credentials = discovery.getJsonArray(Fields.Discovery.CREDENTIAL_JSON);
 
-                                var ipArray = Ip.getIpListAsJsonArray(ipStr, ipType);
+                                var ips = Utility.getIpsFromString(ipStr, ipType);
 
-                                return executeDiscoverySteps(id, ipArray, port, credentials);
+                                logger.debug("Ips " + ips.encode());
+
+                                return executeDiscoverySteps(id, ips, port, credentials);
                             });
                 })
-                .compose(v ->
+
+                .compose(discoveryRunResult ->
                 {
                     // Step 5: Update discovery status to COMPLETED
-                    return Db.updateDiscoveryStatus(id, Fields.Discovery.COMPLETED_STATUS);
+                    return CrudHelpers.updateDiscoveryStatus(id, Fields.Discovery.COMPLETED_STATUS);
                 })
-                .onComplete(ar ->
+
+                .onComplete(statusUpdationStatus ->
                 {
-                    if (ar.succeeded())
+                    if (statusUpdationStatus.succeeded())
                     {
                         promise.complete();
                     }
                     else
                     {
                         // If any step fails, update status to FAILED and complete with failure
-                        Db.updateDiscoveryStatus(id, Fields.DiscoveryResult.FAILED_STATUS)
-                                .onComplete(v -> promise.fail(ar.cause()));
+                        CrudHelpers.updateDiscoveryStatus(id, Fields.DiscoveryResult.FAILED_STATUS)
+                                .onComplete(updateStatusToFailResult -> promise.fail(statusUpdationStatus.cause().getMessage()));
                     }
                 });
 
-        return promise.future();
+        return Future.succeededFuture();
     }
 
-    private Future<Void> executeDiscoverySteps(int id, JsonArray ipArray, int port, JsonArray credentials)
+    private Future<Void> executeDiscoverySteps(int id, JsonArray ips, int port, JsonArray credentials)
     {
         Promise<Void> promise = Promise.promise();
 
         // Step 1: Ping Check - directly call without event bus
-        pingIps(ipArray)
+        pingIps(ips)
                 .compose(pingResults ->
                 {
                     var pingPassedIps = processPingResults(id, pingResults);
 
-
                     // Step 2: Port Check - directly call without event bus
                     return checkPorts(pingPassedIps, port)
+
                             .compose(portResults ->
                             {
                                 var portPassedIps = processPortCheckResults(id, portResults);
@@ -131,34 +132,39 @@ public class Discovery extends AbstractVerticle
                                 // Step 3: Credentials Check - only for IPs that passed port check
                                 if (portPassedIps.isEmpty())
                                 {
-                                    Logger.info("No IPs passed port check for discovery #" + id);
+                                    logger.info("No IPs passed port check for discovery with id " + id);
+
                                     return Future.succeededFuture();
                                 }
 
                                 // Prepare plugin discovery request
                                 var discoveryRequest = new JsonObject()
-                                        .put(Fields.PluginDiscoveryRequest.TYPE, "discovery")
+                                        .put(Fields.PluginDiscoveryRequest.TYPE, Fields.PluginDiscoveryRequest.DISCOVERY)
+
                                         .put(Fields.PluginDiscoveryRequest.ID, id)
+
                                         .put(Fields.PluginDiscoveryRequest.IPS, portPassedIps)
+
                                         .put(Fields.PluginDiscoveryRequest.PORT, port)
+
                                         .put(Fields.PluginDiscoveryRequest.CREDENTIALS, credentials);
 
 
                                 // Send discovery request to plugin via event bus
                                 return sendDiscoveryRequestToPlugin(discoveryRequest)
-                                        .compose(credentialResults ->
-                                                processCredentialCheckResults(id, credentialResults));
+                                        .compose(asyncResult -> processCredentialCheckResults(id, asyncResult));
                             });
                 })
-                .onComplete(ar ->
+
+                .onComplete(asyncResult ->
                 {
-                    if (ar.succeeded())
+                    if (asyncResult.succeeded())
                     {
                         promise.complete();
                     }
                     else
                     {
-                        promise.fail(ar.cause());
+                        promise.fail(asyncResult.cause());
                     }
                 });
 
@@ -169,24 +175,20 @@ public class Discovery extends AbstractVerticle
     {
         Promise<JsonArray> promise = Promise.promise();
 
-        vertx.eventBus().request(Fields.EventBus.PLUGIN_ADDRESS, request, reply ->
+        vertx.eventBus().<JsonObject>request(Fields.EventBus.PLUGIN_SPAWN_ADDRESS, request, reply ->
         {
             if (reply.succeeded())
             {
-                var response = (JsonObject) reply.result().body();
-                if (response.containsKey("error"))
-                {
-                    Logger.error("Error from plugin: " + response.getString("error"));
-                    promise.complete(new JsonArray());
-                }
-                else
-                {
-                    promise.complete(response.getJsonArray("result", new JsonArray()));
-                }
+                var response = reply.result().body();
+
+                logger.debug("Plugin response: " + response.encode());
+
+                promise.complete(response.getJsonArray(Fields.Discovery.RESULT_JSON, new JsonArray()));
             }
             else
             {
-                Logger.error("Error calling plugin: " + reply.cause().getMessage());
+                logger.error("Error calling plugin: " + reply.cause().getMessage());
+
                 promise.complete(new JsonArray());
             }
         });

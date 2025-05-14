@@ -1,4 +1,4 @@
-package org.nms.discovery.helpers;
+package org.nms.discovery;
 
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -7,27 +7,35 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Tuple;
 import org.nms.constants.Fields;
 import org.nms.constants.Queries;
-import org.nms.database.helpers.DbEventBus;
+import org.nms.database.DbUtility;
 
 import java.util.ArrayList;
 
-public class Db
+public class CrudHelpers
 {
     public static Future<JsonObject> fetchDiscoveryDetails(int id)
     {
         Promise<JsonObject> promise = Promise.promise();
 
-        DbEventBus.sendQueryExecutionRequest(Queries.Discovery.GET_BY_ID, new JsonArray().add(id))
-                .onComplete(ar -> {
-                    if (ar.succeeded()) {
-                        var discoveryArray = ar.result();
-                        if (discoveryArray.isEmpty()) {
+        DbUtility.sendQueryExecutionRequest(Queries.Discovery.GET_BY_ID, new JsonArray().add(id))
+                .onComplete(asyncResult ->
+                {
+                    if (asyncResult.succeeded())
+                    {
+                        var discoveryArray = asyncResult.result();
+
+                        if (discoveryArray.isEmpty())
+                        {
                             promise.fail("Discovery not found");
-                        } else {
+                        }
+                        else
+                        {
                             promise.complete(discoveryArray.getJsonObject(0));
                         }
-                    } else {
-                        promise.fail(ar.cause());
+                    }
+                    else
+                    {
+                        promise.fail(asyncResult.cause());
                     }
                 });
 
@@ -38,15 +46,19 @@ public class Db
     {
         Promise<Void> promise = Promise.promise();
 
-        DbEventBus.sendQueryExecutionRequest(
+        DbUtility.sendQueryExecutionRequest(
                         Queries.Discovery.UPDATE_STATUS,
                         new JsonArray().add(id).add(status)
                 )
-                .onComplete(ar -> {
-                    if (ar.succeeded()) {
+                .onComplete(asyncResult ->
+                {
+                    if (asyncResult.succeeded())
+                    {
                         promise.complete();
-                    } else {
-                        promise.fail(ar.cause());
+                    }
+                    else
+                    {
+                        promise.fail(asyncResult.cause());
                     }
                 });
 
@@ -62,8 +74,10 @@ public class Db
         for (int i = 0; i < pingResults.size(); i++)
         {
             var result = pingResults.getJsonObject(i);
-            var success = result.getBoolean("success");
-            var ip = result.getString("ip");
+
+            var success = result.getBoolean(Fields.Discovery.SUCCESS);
+
+            var ip = result.getString(Fields.Discovery.IP);
 
             if (success)
             {
@@ -71,14 +85,14 @@ public class Db
             }
             else
             {
-                pingCheckFailedIps.add(Tuple.of(id, null, ip, result.getString("message"), "FAILED"));
+                pingCheckFailedIps.add(Tuple.of(id, null, ip, result.getString(Fields.DiscoveryResult.MESSAGE), Fields.Discovery.FAILED_STATUS));
             }
         }
 
         // Insert failed IPs if any
         if (!pingCheckFailedIps.isEmpty())
         {
-            DbEventBus.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, pingCheckFailedIps);
+            DbUtility.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, pingCheckFailedIps);
         }
 
         return pingCheckPassedIps;
@@ -87,13 +101,16 @@ public class Db
     public static JsonArray processPortCheckResults(int id, JsonArray portCheckResults)
     {
         var portCheckPassedIps = new JsonArray();
+
         var portCheckFailedIps = new ArrayList<Tuple>();
 
         for (int i = 0; i < portCheckResults.size(); i++)
         {
             var result = portCheckResults.getJsonObject(i);
-            var success = result.getBoolean("success");
-            var ip = result.getString("ip");
+
+            var success = result.getBoolean(Fields.Discovery.SUCCESS);
+
+            var ip = result.getString(Fields.Discovery.IP);
 
             if (success)
             {
@@ -101,14 +118,14 @@ public class Db
             }
             else
             {
-                portCheckFailedIps.add(Tuple.of(id, null, ip, result.getString("message"), "FAILED"));
+                portCheckFailedIps.add(Tuple.of(id, null, ip, result.getString(Fields.DiscoveryResult.MESSAGE), Fields.DiscoveryResult.FAILED_STATUS));
             }
         }
 
         // Insert failed IPs if any
         if (!portCheckFailedIps.isEmpty())
         {
-            DbEventBus.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, portCheckFailedIps);
+            DbUtility.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, portCheckFailedIps);
         }
 
         return portCheckPassedIps;
@@ -117,38 +134,42 @@ public class Db
     public static Future<Void> processCredentialCheckResults(int id, JsonArray credentialCheckResults)
     {
         var credentialCheckFailedIps = new ArrayList<Tuple>();
+
         var credentialCheckSuccessIps = new ArrayList<Tuple>();
 
         for (int i = 0; i < credentialCheckResults.size(); i++)
         {
             var result = credentialCheckResults.getJsonObject(i);
-            var success = result.getBoolean("success");
+
+            var success = result.getBoolean(Fields.Discovery.SUCCESS);
+
             var ip = result.getString(Fields.PluginDiscoveryResponse.IP);
 
             if (success)
             {
                 var credential = result.getJsonObject(Fields.PluginDiscoveryResponse.CREDENTIALS)
                         .getInteger(Fields.Credential.ID);
+
                 credentialCheckSuccessIps.add(
-                        Tuple.of(id, credential, ip, result.getString("message"), "COMPLETED"));
+                        Tuple.of(id, credential, ip, result.getString(Fields.DiscoveryResult.MESSAGE), Fields.DiscoveryResult.COMPLETED_STATUS));
             }
             else
             {
                 credentialCheckFailedIps.add(
-                        Tuple.of(id, null, ip, result.getString("message"), "FAILED"));
+                        Tuple.of(id, null, ip, result.getString(Fields.DiscoveryResult.MESSAGE), Fields.DiscoveryResult.FAILED_STATUS));
             }
         }
 
         // Batch insert results, handling empty lists to avoid batch query errors
-        Future<JsonArray> failureFuture = credentialCheckFailedIps.isEmpty()
+        Future<JsonArray> failure = credentialCheckFailedIps.isEmpty()
                 ? Future.succeededFuture(new JsonArray())
-                : DbEventBus.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, credentialCheckFailedIps);
+                : DbUtility.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, credentialCheckFailedIps);
 
-        Future<JsonArray> successFuture = credentialCheckSuccessIps.isEmpty()
+        Future<JsonArray> success = credentialCheckSuccessIps.isEmpty()
                 ? Future.succeededFuture(new JsonArray())
-                : DbEventBus.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, credentialCheckSuccessIps);
+                : DbUtility.sendQueryExecutionRequest(Queries.Discovery.INSERT_RESULT, credentialCheckSuccessIps);
 
-        return Future.join(failureFuture, successFuture)
+        return Future.join(failure, success)
                 .compose(v -> Future.succeededFuture());
     }
 }

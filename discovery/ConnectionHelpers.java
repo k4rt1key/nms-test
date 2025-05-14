@@ -1,13 +1,14 @@
-package org.nms.discovery.helpers;
+package org.nms.discovery;
 
-import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.NetClientOptions;
 import org.nms.App;
-import org.nms.Logger;
+
+import static org.nms.App.logger;
+
 import org.nms.constants.Config;
 
 import java.io.BufferedReader;
@@ -15,11 +16,13 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
-import static org.nms.discovery.helpers.Utils.*;
+import static org.nms.constants.Fields.Discovery.*;
+import static org.nms.constants.Fields.DiscoveryResult.MESSAGE;
+import static org.nms.discovery.DiscoveryHelpers.*;
 
-public class PingAndPort
+public class ConnectionHelpers
 {
-    public static Future<JsonArray> pingIps(JsonArray ipArray)
+    public static Future<JsonArray> pingIps(JsonArray ips)
     {
         return App.vertx.executeBlocking(promise ->
         {
@@ -32,87 +35,74 @@ public class PingAndPort
             try
             {
                 // Validate input
-                if (ipArray == null || ipArray.isEmpty())
+                if (ips == null || ips.isEmpty())
                 {
                     promise.complete(results);
-                    return;
-                }
 
-                // Collect valid IPs
-                var validIps = new JsonArray();
-
-                for (var i = 0; i < ipArray.size(); i++)
-                {
-                    var ipObj = ipArray.getValue(i);
-
-                    if (!(ipObj instanceof String))
-                    {
-                        continue;
-                    }
-
-                    var ip = ((String) ipObj).trim();
-
-                    if (ip.isEmpty())
-                    {
-                        continue;
-                    }
-
-                    validIps.add(ip);
-                }
-
-                if (validIps.isEmpty())
-                {
-                    promise.complete(results);
                     return;
                 }
 
                 // Prepare fping command
-                var command = new String[validIps.size() + 3];
+                var command = new String[ips.size() + 3];
+
                 command[0] = "fping";
+
                 command[1] = "-c1";
+
                 command[2] = "-q";
 
-                for (var i = 0; i < validIps.size(); i++)
+                for (var i = 0; i < ips.size(); i++)
                 {
-                    command[i + 3] = validIps.getString(i);
+                    command[i + 3] = ips.getString(i);
                 }
 
-                var pb = new ProcessBuilder(command);
-                pb.redirectErrorStream(true);
-                process = pb.start();
+                var processBuilder = new ProcessBuilder(command);
+
+                processBuilder.redirectErrorStream(true);
+
+                process = processBuilder.start();
 
                 // Process timeout
-                var completed = process.waitFor( Config.INITIAL_PLUGIN_OVERHEAD_TIME + ( Config.DISCOVERY_TIMEOUT_PER_IP * ipArray.size() ), TimeUnit.SECONDS);
+                var completed = process.waitFor(Config.BASE_TIME + (Config.DISCOVERY_TIMEOUT_PER_IP * ips.size()), TimeUnit.SECONDS);
 
                 if (!completed)
                 {
                     process.destroyForcibly();
-                    promise.complete(createErrorResultForAll(ipArray, "Ping process timed out"));
+
+                    promise.complete(createErrorResultForAll(ips, "Ping process timed out"));
+
                     return;
                 }
 
                 reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+
                 String line;
+
                 var processedIps = new JsonArray();
 
                 while ((line = reader.readLine()) != null)
                 {
                     var parts = line.split(":");
+
                     if (parts.length < 2)
                     {
                         continue;
                     }
 
                     var ip = parts[0].trim();
+
                     var stats = parts[1].trim();
 
                     processedIps.add(ip);
 
+                    logger.debug("procced ip " + ip);
+
                     var isSuccess = !stats.contains("100%");
+
                     var result = new JsonObject()
-                            .put("success", isSuccess)
-                            .put("ip", ip)
-                            .put("message",
+                            .put(SUCCESS, isSuccess)
+                            .put(IP, ip)
+                            .put(MESSAGE,
                                     isSuccess
                                             ? "Ping check success"
                                             : "Ping check failed: 100% packet loss");
@@ -121,9 +111,10 @@ public class PingAndPort
                 }
 
                 // Handle unprocessed IPs
-                for (var i = 0; i < validIps.size(); i++)
+                for (var i = 0; i < ips.size(); i++)
                 {
-                    var ip = validIps.getString(i);
+                    var ip = ips.getString(i);
+
                     if (!processedIps.contains(ip))
                     {
                         results.add(createErrorResult(ip, "No response from fping"));
@@ -132,10 +123,11 @@ public class PingAndPort
 
                 promise.complete(results);
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
-                Logger.error("Error during ping check: " + e.getMessage());
-                promise.complete(createErrorResultForAll(ipArray, "Error during ping check"));
+                logger.error("Error during ping check: " + exception.getMessage());
+
+                promise.complete(createErrorResultForAll(ips, "Error during ping check"));
             }
             finally
             {
@@ -147,9 +139,9 @@ public class PingAndPort
                     {
                         process.destroyForcibly();
                     }
-                    catch (Exception e)
+                    catch (Exception exception)
                     {
-                        Logger.error("Error destroying ping process: " + e.getMessage());
+                        logger.error("Error destroying ping process: " + exception.getMessage());
                     }
                 }
             }
@@ -159,78 +151,78 @@ public class PingAndPort
     public static Future<JsonArray> checkPorts(JsonArray ips, int port)
     {
         var promise = Promise.<JsonArray>promise();
+
         var results = new JsonArray();
-        var futures = new ArrayList<Future>();
+
+        var futures = new ArrayList<Future<JsonObject>>();
 
         if (ips == null || ips.isEmpty() || port < 1 || port > 65535)
         {
             promise.complete(results);
+
             return promise.future();
         }
 
-        for (var ipObj : ips)
+        for (var ip : ips)
         {
-            if (!(ipObj instanceof String))
-            {
-                continue;
-            }
-
-            var ip = ((String) ipObj).trim();
-            if (ip.isEmpty())
-            {
-                continue;
-            }
-
             var checkPromise = Promise.<JsonObject>promise();
+
             futures.add(checkPromise.future());
 
             var result = new JsonObject()
-                    .put("ip", ip)
-                    .put("port", port);
+                    .put(IP, ip.toString())
+                    .put(PORT, port);
 
             try
             {
                 App.vertx.createNetClient(new NetClientOptions().setConnectTimeout(Config.PORT_TIMEOUT * 1000))
-                        .connect(port, ip, ar ->
+                        .connect(port, ip.toString(), asyncResult ->
                         {
                             try
                             {
-                                if (ar.succeeded())
+                                if (asyncResult.succeeded())
                                 {
-                                    var socket = ar.result();
-                                    result.put("success", true)
-                                            .put("message", "Port " + port + " is open on " + ip);
+                                    var socket = asyncResult.result();
+
+                                    result.put(SUCCESS, true)
+                                            .put(MESSAGE, "Port " + port + " is open on " + ip);
+
                                     socket.close();
                                 }
                                 else
                                 {
-                                    var cause = ar.cause();
+                                    var cause = asyncResult.cause();
+
                                     var errorMessage = cause != null ? cause.getMessage() : "Unknown error";
 
-                                    result.put("success", false)
-                                            .put("message",
+                                    result.put(SUCCESS, false)
+                                            .put(MESSAGE,
                                                     errorMessage.contains("Connection refused")
                                                             ? "Port " + port + " is closed on " + ip
                                                             : errorMessage);
                                 }
                             }
-                            catch (Exception e)
+                            catch (Exception exception)
                             {
-                                result.put("success", false)
-                                        .put("message", "Error handling connection: " + e.getMessage());
+                                result
+                                        .put(SUCCESS, false)
+                                        .put(MESSAGE, "Something went wrong");
+
+                                logger.error("Something went wrong, error: " + exception.getMessage());
                             }
                             finally
                             {
                                 results.add(result);
+
                                 checkPromise.complete(result);
                             }
                         });
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
                 result
-                        .put("success", false)
-                        .put("message", "Error creating connection: " + e.getMessage());
+                        .put(SUCCESS, false)
+                        .put(MESSAGE, "Error creating connection: " + exception.getMessage());
                 results
                         .add(result);
 
@@ -238,7 +230,7 @@ public class PingAndPort
             }
         }
 
-        CompositeFuture.all(futures)
+        Future.all(futures)
                 .onComplete(ar ->
                 {
                     if (ar.succeeded())
@@ -247,7 +239,8 @@ public class PingAndPort
                     }
                     else
                     {
-                        Logger.error("Error in port check: " + ar.cause().getMessage());
+                        logger.error("Error in port check: " + ar.cause().getMessage());
+
                         promise.complete(results);
                     }
                 });
@@ -255,3 +248,5 @@ public class PingAndPort
         return promise.future();
     }
 }
+
+

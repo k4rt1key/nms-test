@@ -36,6 +36,8 @@ public class Fields
 
         public static final String PENDING_STATUS = "PENDING";
 
+        public static final String FAILED_STATUS = "FAILED";
+
         public static final String COMPLETED_STATUS = "COMPLETED";
 
         public static final String PORT = "port";
@@ -43,6 +45,14 @@ public class Fields
         public static final String CREDENTIAL_JSON = "credential";
 
         public static final String RESULT_JSON = "results";
+
+        public static final String ADD_CREDENTIALS = "add_credentials";
+
+        public static final String REMOVE_CREDENTIALS = "remove_credentials";
+
+        public static final String SUCCESS = "success";
+
+        public static final String FAILURE = "fail";
     }
 
     public static class DiscoveryCredential
@@ -132,7 +142,7 @@ public class Fields
 
         public static final String DISCOVERY = "discovery";
 
-        public static final String RESULT_JSON = "result";
+        public static final String RESULT_JSON = "results";
 
         public static final String ID = "id";
 
@@ -196,18 +206,14 @@ public class Fields
 
     public static class EventBus
     {
-        public static final String PLUGIN_ADDRESS = "plugin.execute";
+        public static final String PLUGIN_SPAWN_ADDRESS = "plugin.spawn";
 
-        public static final String RUN_DISCOVERY_ADDRESS = "plugin.discovery";
+        public static final String RUN_DISCOVERY_ADDRESS = "discovery";
 
-        public static final String PING_CHECK_ADDRESS = "discovery.ping";
+        public static final String EXECUTE_SQL_QUERY_ADDRESS = "database.execute.sql";
 
-        public static final String PORT_CHECK_ADDRESS = "discovery.port";
+        public static final String EXECUTE_SQL_QUERY_WITH_PARAMS_ADDRESS = "database.execute.sql.params";
 
-        public static final String EXECUTE_SQL_ADDRESS = "database.execute.sql";
-
-        public static final String EXECUTE_SQL_WITH_PARAMS_ADDRESS = "database.execute.sql.params";
-
-        public static final String EXECUTE_SQL_BATCH_ADDRESS = "database.execute.sql.batch";
+        public static final String EXECUTE_SQL_QUERY_BATCH_ADDRESS = "database.execute.sql.batch";
     }
 }
